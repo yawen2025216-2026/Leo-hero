@@ -43,7 +43,6 @@
         }
         .task-flash { animation: flashEffect 0.4s ease-out; }
 
-        /* 專為 Leo dash 設計的藍色發光動畫 */
         @keyframes bounceGlowBlue {
             0%, 100% { transform: translateY(0); text-shadow: 0 0 15px rgba(59, 130, 246, 0.8); }
             50% { transform: translateY(-3px); text-shadow: 0 0 25px rgba(59, 130, 246, 1); }
@@ -69,10 +68,10 @@
         const { useState, useEffect, useRef } = React;
         const { motion, AnimatePresence } = window.Motion;
 
-        // 🔴🔴🔴 非常重要：請務必將引號內的文字，換成您剛剛複製的 Google Apps Script 網址 🔴🔴🔴
+        // 🔴🔴🔴 請把下方的引號內容，替換成您的 GAS 網址 🔴🔴🔴
         const GAS_API_URL = "https://script.google.com/macros/s/AKfycbyfroi4IYTg7gzUHT-FH_QtHescW43IGQ1YuGe3-UYn15ZMmNFv5CoaYIT9ZwsKTyjY6A/exec";
         
-        const LOCAL_STORAGE_KEY = "leo_dash_local_data_v4";
+        const LOCAL_STORAGE_KEY = "leo_dash_local_data_v5"; 
 
         // --- SVG 圖示 ---
         const X = ({ size=24 }) => (
@@ -145,6 +144,18 @@
             return `${dateObj.getFullYear()}/${dateObj.getMonth() + 1}/${dateObj.getDate()}`;
         };
 
+        // 【新增】強制把雲端抓回來的怪異時間格式轉回正常的 YYYY/M/D
+        const normalizeDateStr = (dateVal) => {
+            if (!dateVal) return "";
+            try {
+                const d = new Date(dateVal);
+                if (!isNaN(d.getTime())) {
+                    return formatDate(d);
+                }
+            } catch(e) {}
+            return dateVal;
+        };
+
         const LeoHeroDashboard = () => {
             const [totalExp, setTotalExp] = useState(0);
             const [weeklyExp, setWeeklyExp] = useState(0);
@@ -170,10 +181,9 @@
             const realToday = new Date();
             const todayStr = formatDate(realToday);
 
-            // 背景同步機制
             const syncFromCloud = async (isManual = false) => {
                 if (!GAS_API_URL.startsWith("https://script.google.com")) {
-                    if (isManual) showSystemMessage("⚠️ 請先在程式碼設定 GAS 網址！");
+                    if (isManual) showSystemMessage("⚠️ 請先設定 GAS 網址！");
                     return;
                 }
 
@@ -189,15 +199,15 @@
                         setTotalExp(data.totalExp);
                         setWeeklyExp(isSameWeek ? data.weeklyExp : 0);
                         
+                        // 【關鍵修復】透過 normalizeDateStr 把 Google Sheets 傳來的時間強制洗成本機格式
                         const combinedLog = [...(data.taskLog || []), ...(data.strategyLog || [])].map(item => ({
                             id: "cloud_" + Math.random().toString(36).substr(2, 9), 
-                            date: item.date, 
+                            date: normalizeDateStr(item.date), 
                             name: item.name, 
                             exp: item.exp 
                         }));
                         setTaskLog(combinedLog);
 
-                        // 更新本地快取
                         localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify({
                             totalExp: data.totalExp,
                             weeklyExp: isSameWeek ? data.weeklyExp : 0,
@@ -216,7 +226,6 @@
             };
 
             useEffect(() => {
-                // 1. 先讀取本地端，讓畫面瞬間出現
                 const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
                 if (saved) {
                     try {
@@ -232,10 +241,8 @@
                 const savedChecks = localStorage.getItem(LOCAL_STORAGE_KEY + "_checks");
                 if (savedChecks) setCheckedDays(JSON.parse(savedChecks));
 
-                // 2. 啟動立刻去雲端對齊一次
                 syncFromCloud();
 
-                // 3. 設定每 10 秒自動背景更新一次
                 const interval = setInterval(() => {
                     syncFromCloud(false);
                 }, 10000);
@@ -255,7 +262,6 @@
                     taskLog: newLog
                 }));
 
-                // 點擊後，立刻非同步推送到雲端
                 if (bgSyncAction && GAS_API_URL.startsWith("https://script.google.com")) {
                     setIsSyncing(true);
                     fetch(GAS_API_URL, {
@@ -445,7 +451,6 @@
             return (
                 <div className={`min-h-screen pb-24 flex flex-col items-center relative transition-colors duration-500 bg-[#0b1120]`}>
                     
-                    {/* 頂部控制列 - 已修復並優化排版 */}
                     <div className="w-full max-w-2xl p-4 md:px-8 flex justify-between items-center z-20 gap-2">
                         <div className="flex items-center gap-2 md:gap-5">
                             <h1 className="text-3xl md:text-5xl font-orbitron font-black italic tracking-wider text-cyan-400 anim-bounce-glow-blue whitespace-nowrap" style={{ textShadow: '2px 2px 0 #000' }}>
@@ -473,7 +478,6 @@
                         )}
                     </AnimatePresence>
 
-                    {/* 主要區塊 */}
                     <div className="w-full max-w-2xl px-4 md:px-8 flex flex-col gap-5 md:gap-6 z-10 mt-2">
                         <div className="w-full">
                             <div className="flex justify-between items-end mb-1">
@@ -562,24 +566,24 @@
                         </div>
                     </div>
 
-                    {/* 彈窗：每日提醒 */}
+                    {/* 彈窗：每日提醒 (已放大字體與寬度) */}
                     <AnimatePresence>
                         {isReminderOpen && (
                             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} 
                                 className="fixed inset-0 bg-black/90 z-[70] flex justify-center items-center p-4 md:p-8"
                                 onClick={(e) => { if (e.target === e.currentTarget) setIsReminderOpen(false); }}
                             >
-                                <div className="w-full max-w-sm md:max-w-md bg-[#0f172a] rounded-2xl border border-cyan-500 p-6 flex flex-col gap-4 relative shadow-[0_0_25px_rgba(34,211,238,0.3)]">
-                                    <button onClick={() => setIsReminderOpen(false)} className="absolute top-4 right-4 w-10 h-10 bg-red-600/80 hover:bg-red-500 rounded-full flex items-center justify-center text-white shrink-0 shadow-lg">
-                                        <X size={24} />
+                                <div className="w-[95%] max-w-md bg-[#0f172a] rounded-2xl border border-cyan-500 p-6 flex flex-col gap-4 relative shadow-[0_0_25px_rgba(34,211,238,0.3)]">
+                                    <button onClick={() => setIsReminderOpen(false)} className="absolute top-4 right-4 w-12 h-12 bg-red-600/80 hover:bg-red-500 rounded-full flex items-center justify-center text-white shrink-0 shadow-lg">
+                                        <X size={28} />
                                     </button>
-                                    <h2 className="text-2xl md:text-3xl font-bold text-center text-cyan-400 mb-2 border-b border-gray-700 pb-4 pr-8">
+                                    <h2 className="text-2xl md:text-3xl font-bold text-center text-cyan-400 mb-2 border-b border-gray-700 pb-4 pr-10">
                                         🔔 今日任務提醒
                                     </h2>
-                                    <p className="text-white text-xl md:text-2xl font-bold text-center leading-relaxed py-6">
+                                    <p className="text-white text-2xl md:text-3xl font-bold text-center leading-normal py-6">
                                         {currentReminderText}
                                     </p>
-                                    <button onClick={() => setIsReminderOpen(false)} className="w-full py-4 mt-2 bg-cyan-600/90 text-white text-xl font-bold rounded-xl hover:bg-cyan-500 transition-colors shadow-lg">
+                                    <button onClick={() => setIsReminderOpen(false)} className="w-full py-4 mt-2 bg-cyan-600/90 text-white text-2xl font-bold rounded-xl hover:bg-cyan-500 transition-colors shadow-lg tracking-wide">
                                         我知道了，開始紀錄！
                                     </button>
                                 </div>
