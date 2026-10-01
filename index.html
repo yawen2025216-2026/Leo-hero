@@ -68,10 +68,11 @@
         const { useState, useEffect, useRef } = React;
         const { motion, AnimatePresence } = window.Motion;
 
-        // 🔴🔴🔴 請把下方的引號內容，替換成您的 GAS 網址 🔴🔴🔴
+        // 🔴🔴🔴 請務必把引號內的文字，換成您的 Google Apps Script 網址 🔴🔴🔴
         const GAS_API_URL = "https://script.google.com/macros/s/AKfycbyfroi4IYTg7gzUHT-FH_QtHescW43IGQ1YuGe3-UYn15ZMmNFv5CoaYIT9ZwsKTyjY6A/exec";
         
-        const LOCAL_STORAGE_KEY = "leo_dash_local_data_v5"; 
+        // 更新儲存版號，強迫系統清除舊的錯誤快取
+        const LOCAL_STORAGE_KEY = "leo_dash_local_data_v6";
 
         // --- SVG 圖示 ---
         const X = ({ size=24 }) => (
@@ -144,18 +145,6 @@
             return `${dateObj.getFullYear()}/${dateObj.getMonth() + 1}/${dateObj.getDate()}`;
         };
 
-        // 【新增】強制把雲端抓回來的怪異時間格式轉回正常的 YYYY/M/D
-        const normalizeDateStr = (dateVal) => {
-            if (!dateVal) return "";
-            try {
-                const d = new Date(dateVal);
-                if (!isNaN(d.getTime())) {
-                    return formatDate(d);
-                }
-            } catch(e) {}
-            return dateVal;
-        };
-
         const LeoHeroDashboard = () => {
             const [totalExp, setTotalExp] = useState(0);
             const [weeklyExp, setWeeklyExp] = useState(0);
@@ -181,9 +170,10 @@
             const realToday = new Date();
             const todayStr = formatDate(realToday);
 
+            // 背景同步機制
             const syncFromCloud = async (isManual = false) => {
                 if (!GAS_API_URL.startsWith("https://script.google.com")) {
-                    if (isManual) showSystemMessage("⚠️ 請先設定 GAS 網址！");
+                    if (isManual) showSystemMessage("⚠️ 請先在程式碼設定 GAS 網址！");
                     return;
                 }
 
@@ -196,21 +186,24 @@
                         const currentWeekStart = getWeekStart();
                         const isSameWeek = data.weekStart === currentWeekStart;
                         
-                        setTotalExp(data.totalExp);
-                        setWeeklyExp(isSameWeek ? data.weeklyExp : 0);
+                        // 【淨化防護】確保雲端抓下來的資料絕對不會是負數
+                        const safeTotal = Math.max(0, data.totalExp);
+                        const safeWeekly = isSameWeek ? Math.max(0, data.weeklyExp) : 0;
                         
-                        // 【關鍵修復】透過 normalizeDateStr 把 Google Sheets 傳來的時間強制洗成本機格式
+                        setTotalExp(safeTotal);
+                        setWeeklyExp(safeWeekly);
+                        
                         const combinedLog = [...(data.taskLog || []), ...(data.strategyLog || [])].map(item => ({
                             id: "cloud_" + Math.random().toString(36).substr(2, 9), 
-                            date: normalizeDateStr(item.date), 
+                            date: item.date, 
                             name: item.name, 
                             exp: item.exp 
                         }));
                         setTaskLog(combinedLog);
 
                         localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify({
-                            totalExp: data.totalExp,
-                            weeklyExp: isSameWeek ? data.weeklyExp : 0,
+                            totalExp: safeTotal,
+                            weeklyExp: safeWeekly,
                             weekStart: currentWeekStart,
                             taskLog: combinedLog
                         }));
@@ -232,8 +225,13 @@
                         const data = JSON.parse(saved);
                         const currentWeekStart = getWeekStart();
                         if (data.weekStart === currentWeekStart) {
-                            setTotalExp(data.totalExp || 0);
-                            setWeeklyExp(data.weeklyExp || 0);
+                            setTotalExp(Math.max(0, data.totalExp || 0));
+                            setWeeklyExp(Math.max(0, data.weeklyExp || 0));
+                            setTaskLog(data.taskLog || []);
+                        } else {
+                            // 【每週一循環防護】新的一週自動將週進度歸零
+                            setTotalExp(Math.max(0, data.totalExp || 0));
+                            setWeeklyExp(0);
                             setTaskLog(data.taskLog || []);
                         }
                     } catch (e) {}
@@ -251,13 +249,17 @@
             }, []);
 
             const saveData = (newTotal, newWeekly, newLog, bgSyncAction = null) => {
-                setTotalExp(newTotal);
-                setWeeklyExp(newWeekly);
+                // 【終極防線】儲存前再次確保不低於 0
+                const safeTotal = Math.max(0, newTotal);
+                const safeWeekly = Math.max(0, newWeekly);
+
+                setTotalExp(safeTotal);
+                setWeeklyExp(safeWeekly);
                 setTaskLog(newLog);
 
                 localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify({
-                    totalExp: newTotal,
-                    weeklyExp: newWeekly,
+                    totalExp: safeTotal,
+                    weeklyExp: safeWeekly,
                     weekStart: getWeekStart(),
                     taskLog: newLog
                 }));
@@ -269,14 +271,23 @@
                         mode: 'no-cors',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
-                            totalExp: newTotal,
-                            weeklyExp: newWeekly,
+                            totalExp: safeTotal,
+                            weeklyExp: safeWeekly,
                             weekStart: getWeekStart(),
                             ...bgSyncAction
                         })
                     }).then(() => {
                         setIsSyncing(false);
                     }).catch(() => setIsSyncing(false));
+                }
+            };
+
+            // 【新增功能】一鍵重置系統
+            const handleHardReset = () => {
+                if (confirm("⚠️ 警告：確定要將『所有點數』與『本週紀錄』強制歸零嗎？\n這將修復亂掉的問題，且無法復原！")) {
+                    saveData(0, 0, [], { action: "reset_system", date: todayStr, taskName: "系統強制歸零", exp: 0, status: "approved" });
+                    alert("已成功歸零！現在是全新的開始！");
+                    setIsReviewOpen(false);
                 }
             };
 
@@ -321,8 +332,9 @@
                 if (existingIndex > -1) {
                     const removedExp = newLog[existingIndex].exp;
                     newLog.splice(existingIndex, 1);
-                    newTotal -= removedExp;
-                    if (isCurrentWeek) newWeekly -= removedExp;
+                    // 【防護】取消任務時，分數最少扣到 0
+                    newTotal = Math.max(0, newTotal - removedExp);
+                    if (isCurrentWeek) newWeekly = Math.max(0, newWeekly - removedExp);
                     bgAction = { action: "remove_task", date: selectedDateStr, taskName: finalName, exp: removedExp };
                 } else {
                     setFlashingTask(taskObj.id);
@@ -353,8 +365,9 @@
                     return;
                 }
                 if (confirm(`確定要扣除本週 ${deduction} EXP 嗎？`)) {
-                    const newWeekly = weeklyExp - deduction;
-                    const newTotal = totalExp - deduction;
+                    // 【防護】手動扣點最少扣到 0
+                    const newWeekly = Math.max(0, weeklyExp - deduction);
+                    const newTotal = Math.max(0, totalExp - deduction);
                     setSpendInput("");
                     triggerConfetti();
                     saveData(newTotal, newWeekly, taskLog, { action: "spend_exp", date: todayStr, itemName: `手動扣除`, cost: deduction });
@@ -365,10 +378,11 @@
             const handleRemoveSingleLog = (logIndexToRemove) => {
                 if(confirm("確定要刪除這筆紀錄並扣回點數嗎？")) {
                     const logItem = taskLog[logIndexToRemove];
-                    let newTotal = totalExp - logItem.exp;
+                    // 【防護】刪除單筆紀錄時最少扣到 0
+                    let newTotal = Math.max(0, totalExp - logItem.exp);
                     let newWeekly = weeklyExp;
                     if (isTimestampInCurrentWeek(new Date(logItem.date).getTime())) {
-                        newWeekly -= logItem.exp;
+                        newWeekly = Math.max(0, newWeekly - logItem.exp);
                     }
                     let newLog = [...taskLog];
                     newLog.splice(logIndexToRemove, 1);
@@ -382,10 +396,12 @@
                 localStorage.setItem(LOCAL_STORAGE_KEY + "_checks", JSON.stringify(newChecks));
             };
 
-            const currentRank = RANKS.slice().reverse().find(r => totalExp >= r.req) || RANKS[0];
-            const nextRank = RANKS.find(r => r.req > totalExp) || RANKS[RANKS.length - 1];
-            const progressPercent = Math.min(100, ((totalExp - currentRank.req) / (nextRank.req - currentRank.req)) * 100);
-            const weeklyPercent = Math.min(100, (weeklyExp / WEEKLY_GOAL) * 100);
+            // 【防護】即使傳入異常值，Rank 計算也不會壞掉
+            const safeExpForRank = Math.max(0, totalExp);
+            const currentRank = RANKS.slice().reverse().find(r => safeExpForRank >= r.req) || RANKS[0];
+            const nextRank = RANKS.find(r => r.req > safeExpForRank) || RANKS[RANKS.length - 1];
+            const progressPercent = Math.min(100, Math.max(0, ((safeExpForRank - currentRank.req) / (nextRank.req - currentRank.req)) * 100));
+            const weeklyPercent = Math.min(100, Math.max(0, (weeklyExp / WEEKLY_GOAL) * 100));
 
             const monthYear = calendarDate.getFullYear();
             const monthIndex = calendarDate.getMonth();
@@ -451,6 +467,7 @@
             return (
                 <div className={`min-h-screen pb-24 flex flex-col items-center relative transition-colors duration-500 bg-[#0b1120]`}>
                     
+                    {/* 頂部控制列 */}
                     <div className="w-full max-w-2xl p-4 md:px-8 flex justify-between items-center z-20 gap-2">
                         <div className="flex items-center gap-2 md:gap-5">
                             <h1 className="text-3xl md:text-5xl font-orbitron font-black italic tracking-wider text-cyan-400 anim-bounce-glow-blue whitespace-nowrap" style={{ textShadow: '2px 2px 0 #000' }}>
@@ -478,6 +495,7 @@
                         )}
                     </AnimatePresence>
 
+                    {/* 主要區塊 */}
                     <div className="w-full max-w-2xl px-4 md:px-8 flex flex-col gap-5 md:gap-6 z-10 mt-2">
                         <div className="w-full">
                             <div className="flex justify-between items-end mb-1">
@@ -566,24 +584,24 @@
                         </div>
                     </div>
 
-                    {/* 彈窗：每日提醒 (已放大字體與寬度) */}
+                    {/* 彈窗：每日提醒 */}
                     <AnimatePresence>
                         {isReminderOpen && (
                             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} 
                                 className="fixed inset-0 bg-black/90 z-[70] flex justify-center items-center p-4 md:p-8"
                                 onClick={(e) => { if (e.target === e.currentTarget) setIsReminderOpen(false); }}
                             >
-                                <div className="w-[95%] max-w-md bg-[#0f172a] rounded-2xl border border-cyan-500 p-6 flex flex-col gap-4 relative shadow-[0_0_25px_rgba(34,211,238,0.3)]">
-                                    <button onClick={() => setIsReminderOpen(false)} className="absolute top-4 right-4 w-12 h-12 bg-red-600/80 hover:bg-red-500 rounded-full flex items-center justify-center text-white shrink-0 shadow-lg">
-                                        <X size={28} />
+                                <div className="w-full max-w-sm md:max-w-md bg-[#0f172a] rounded-2xl border border-cyan-500 p-6 flex flex-col gap-4 relative shadow-[0_0_25px_rgba(34,211,238,0.3)]">
+                                    <button onClick={() => setIsReminderOpen(false)} className="absolute top-4 right-4 w-10 h-10 bg-red-600/80 hover:bg-red-500 rounded-full flex items-center justify-center text-white shrink-0 shadow-lg">
+                                        <X size={24} />
                                     </button>
-                                    <h2 className="text-2xl md:text-3xl font-bold text-center text-cyan-400 mb-2 border-b border-gray-700 pb-4 pr-10">
+                                    <h2 className="text-2xl md:text-3xl font-bold text-center text-cyan-400 mb-2 border-b border-gray-700 pb-4 pr-8">
                                         🔔 今日任務提醒
                                     </h2>
-                                    <p className="text-white text-2xl md:text-3xl font-bold text-center leading-normal py-6">
+                                    <p className="text-white text-xl md:text-2xl font-bold text-center leading-relaxed py-6">
                                         {currentReminderText}
                                     </p>
-                                    <button onClick={() => setIsReminderOpen(false)} className="w-full py-4 mt-2 bg-cyan-600/90 text-white text-2xl font-bold rounded-xl hover:bg-cyan-500 transition-colors shadow-lg tracking-wide">
+                                    <button onClick={() => setIsReminderOpen(false)} className="w-full py-4 mt-2 bg-cyan-600/90 text-white text-xl font-bold rounded-xl hover:bg-cyan-500 transition-colors shadow-lg">
                                         我知道了，開始紀錄！
                                     </button>
                                 </div>
@@ -693,6 +711,15 @@
                                                 ))
                                             )}
                                         </div>
+                                        
+                                        {/* 強制歸零按鈕區塊 */}
+                                        <div className="mt-8 border-t border-gray-700 pt-4 flex justify-between items-center">
+                                            <span className="text-gray-500 text-sm">系統發生異常時可使用：</span>
+                                            <button onClick={handleHardReset} className="bg-red-900/80 hover:bg-red-700 text-red-200 px-4 py-2 rounded-lg font-bold text-sm transition-colors border border-red-700">
+                                                ⚠️ 系統重置 (強制歸零)
+                                            </button>
+                                        </div>
+
                                     </div>
                                 </div>
                             </motion.div>
