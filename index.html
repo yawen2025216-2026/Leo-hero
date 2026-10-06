@@ -66,7 +66,14 @@
 
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
-        const { motion, AnimatePresence } = window.Motion;
+        
+        // 【修復】安全降級機制：防止 Framer Motion 動畫引擎載入失敗導致「一片黑」
+        const fallbackMotion = {
+            div: (props) => { const { initial, animate, exit, transition, whileTap, ...rest } = props; return <div {...rest} />; },
+            button: (props) => { const { initial, animate, exit, transition, whileTap, ...rest } = props; return <button {...rest} />; }
+        };
+        const motion = window.Motion ? window.Motion.motion : fallbackMotion;
+        const AnimatePresence = window.Motion ? window.Motion.AnimatePresence : ({children}) => <>{children}</>;
 
         // 🔴🔴🔴 請務必把引號內的文字，換成您的 Google Apps Script 網址 🔴🔴🔴
         const GAS_API_URL = "https://script.google.com/macros/s/AKfycbyfroi4IYTg7gzUHT-FH_QtHescW43IGQ1YuGe3-UYn15ZMmNFv5CoaYIT9ZwsKTyjY6A/exec
@@ -220,9 +227,9 @@
             };
 
             useEffect(() => {
-                const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
-                if (saved) {
-                    try {
+                try {
+                    const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+                    if (saved) {
                         const data = JSON.parse(saved);
                         const currentWeekStart = getWeekStart();
                         if (data.weekStart === currentWeekStart) {
@@ -235,18 +242,22 @@
                             setWeeklyExp(0);
                             setTaskLog(data.taskLog || []);
                         }
-                    } catch (e) {}
+                    }
+                } catch (e) {
+                    console.error("讀取本地資料失敗", e);
                 }
-                const savedChecks = localStorage.getItem(LOCAL_STORAGE_KEY + "_checks");
-                if (savedChecks) setCheckedDays(JSON.parse(savedChecks));
+                
+                try {
+                    const savedChecks = localStorage.getItem(LOCAL_STORAGE_KEY + "_checks");
+                    if (savedChecks) setCheckedDays(JSON.parse(savedChecks));
+                } catch (e) {
+                    console.error("讀取打勾狀態失敗", e);
+                }
 
                 syncFromCloud();
 
-                const interval = setInterval(() => {
-                    syncFromCloud(false);
-                }, 10000);
-
-                return () => clearInterval(interval);
+                // 【修復】移除 10 秒自動重新整理，避免 Google 試算表還沒更新完，
+                // 就把舊資料抓下來覆蓋掉剛點選的任務（這就是點選後消失的原因）
             }, []);
 
             const saveData = (newTotal, newWeekly, newLog, bgSyncAction = null) => {
@@ -398,11 +409,16 @@
             };
 
             // 【防護】即使傳入異常值，Rank 計算也不會壞掉
-            const safeExpForRank = Math.max(0, totalExp);
+            const safeExpForRank = Math.max(0, totalExp || 0);
             const currentRank = RANKS.slice().reverse().find(r => safeExpForRank >= r.req) || RANKS[0];
             const nextRank = RANKS.find(r => r.req > safeExpForRank) || RANKS[RANKS.length - 1];
-            const progressPercent = Math.min(100, Math.max(0, ((safeExpForRank - currentRank.req) / (nextRank.req - currentRank.req)) * 100));
-            const weeklyPercent = Math.min(100, Math.max(0, (weeklyExp / WEEKLY_GOAL) * 100));
+            
+            // 【修復】防止滿等時「除以零」造成的畫面崩潰
+            let progressPercent = 100;
+            if (nextRank.req > currentRank.req) {
+                progressPercent = Math.min(100, Math.max(0, ((safeExpForRank - currentRank.req) / (nextRank.req - currentRank.req)) * 100));
+            }
+            const weeklyPercent = Math.min(100, Math.max(0, ((weeklyExp || 0) / WEEKLY_GOAL) * 100));
 
             const monthYear = calendarDate.getFullYear();
             const monthIndex = calendarDate.getMonth();
