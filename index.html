@@ -9,7 +9,6 @@
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://unpkg.com/framer-motion@10.16.4/dist/framer-motion.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
 
     <style>
@@ -54,6 +53,13 @@
             50% { transform: scale(1.05); box-shadow: 0 0 25px rgba(250, 204, 21, 0.9); }
         }
         .anim-pulse-scale { animation: pulseScale 1.5s infinite ease-in-out; }
+        
+        /* 替換動畫引擎的原生漸變顯示特效 */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .modal-fade-in { animation: fadeIn 0.3s ease-out forwards; }
 
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
@@ -67,19 +73,11 @@
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
         
-        // 【修復】安全降級機制：防止 Framer Motion 動畫引擎載入失敗導致「一片黑」
-        const fallbackMotion = {
-            div: (props) => { const { initial, animate, exit, transition, whileTap, ...rest } = props; return <div {...rest} />; },
-            button: (props) => { const { initial, animate, exit, transition, whileTap, ...rest } = props; return <button {...rest} />; }
-        };
-        const motion = window.Motion ? window.Motion.motion : fallbackMotion;
-        const AnimatePresence = window.Motion ? window.Motion.AnimatePresence : ({children}) => <>{children}</>;
-
-        // 🔴🔴🔴 請務必把引號內的文字，換成您的 Google Apps Script 網址 🔴🔴🔴
-        const GAS_API_URL = "https://script.google.com/macros/s/AKfycbyfroi4IYTg7gzUHT-FH_QtHescW43IGQ1YuGe3-UYn15ZMmNFv5CoaYIT9ZwsKTyjY6A/exec
-";
+        // 🔴🔴🔴 非常重要：請務必將引號內的文字，換成您專屬的 Google Apps Script 網址 🔴🔴🔴
+        const GAS_API_URL = "https://script.google.com/macros/s/AKfycbyfroi4IYTg7gzUHT-FH_QtHescW43IGQ1YuGe3-UYn15ZMmNFv5CoaYIT9ZwsKTyjY6A/exec";
         
-        const LOCAL_STORAGE_KEY = "leo_dash_local_data_v6";
+        // 更新儲存金鑰確保不會吃到舊的壞資料
+        const LOCAL_STORAGE_KEY = "leo_dash_local_data_v8";
 
         // --- SVG 圖示 ---
         const X = ({ size=24 }) => (
@@ -119,14 +117,14 @@
             { id: "t7", name: "平日考試優秀", exp: 0, icon: "💯", type: "exam" },
         ];
 
-        // 🌟 更新的每日提醒內容 🌟
+        // 🌟 最新設定的提醒內容 🌟
         const DAILY_REMINDERS = {
             1: "週一提醒：寫國語評量",
             2: "週二提醒：完成 Epop",
             3: "週三提醒：寫長頸鹿英文功課",
             4: "週四提醒：寫社自評量",
             5: "週五提醒：寫數學評量",
-            6: "週六提醒：週末放鬆時間，檢查未完成任務",
+            6: "週六提醒：週末放鬆時間，檢查本週未完成任務",
             0: "週日提醒：寫長頸鹿英文功課"
         };
 
@@ -178,17 +176,14 @@
             const realToday = new Date();
             const todayStr = formatDate(realToday);
 
-            // 背景同步機制
-            const syncFromCloud = async (isManual = false) => {
+            // 手動雲端同步
+            const syncFromCloud = async () => {
                 if (!GAS_API_URL.startsWith("https://script.google.com")) {
-                    if (isManual) showSystemMessage("⚠️ 請先在程式碼設定 GAS 網址！");
+                    showSystemMessage("⚠️ 請先設定 GAS 網址！");
                     return;
                 }
-
-                // 【防護】避免存檔到一半時，去雲端抓到舊資料把畫面蓋掉
-                if (isSyncing && !isManual) return;
-
-                if (isManual) setIsSyncing(true);
+                
+                setIsSyncing(true);
                 try {
                     const res = await fetch(GAS_API_URL);
                     const data = await res.json();
@@ -197,7 +192,7 @@
                         const currentWeekStart = getWeekStart();
                         const isSameWeek = data.weekStart === currentWeekStart;
                         
-                        // 【淨化防護】確保雲端抓下來的資料絕對不會是負數
+                        // 防負數與自動歸零機制
                         const safeTotal = Math.max(0, data.totalExp);
                         const safeWeekly = isSameWeek ? Math.max(0, data.weeklyExp) : 0;
                         
@@ -222,14 +217,13 @@
                 } catch (e) {
                     console.error("Cloud Sync Failed", e);
                 } finally {
-                    if (isManual) {
-                        setIsSyncing(false);
-                        showSystemMessage("✅ 雲端同步完成！");
-                    }
+                    setIsSyncing(false);
+                    showSystemMessage("✅ 雲端同步完成！");
                 }
             };
 
             useEffect(() => {
+                // 1. 初始化讀取
                 try {
                     const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
                     if (saved) {
@@ -240,29 +234,27 @@
                             setWeeklyExp(Math.max(0, data.weeklyExp || 0));
                             setTaskLog(data.taskLog || []);
                         } else {
-                            // 【每週一循環防護】新的一週自動將週進度歸零
+                            // 過了一週，自動清空週進度
                             setTotalExp(Math.max(0, data.totalExp || 0));
                             setWeeklyExp(0);
                             setTaskLog(data.taskLog || []);
                         }
                     }
-                } catch (e) {
-                    console.error("讀取本地資料失敗", e);
-                }
+                } catch (e) {}
                 
                 try {
                     const savedChecks = localStorage.getItem(LOCAL_STORAGE_KEY + "_checks");
                     if (savedChecks) setCheckedDays(JSON.parse(savedChecks));
-                } catch (e) {
-                    console.error("讀取打勾狀態失敗", e);
-                }
+                } catch (e) {}
 
-                syncFromCloud();
-                // 不再自動定時刷新，避免吃掉剛剛點選的進度
+                // 2. 僅在剛開網頁時同步一次，不再定時刷新吃掉進度
+                if (GAS_API_URL.startsWith("https://script.google.com")) {
+                    syncFromCloud();
+                }
             }, []);
 
             const saveData = (newTotal, newWeekly, newLog, bgSyncAction = null) => {
-                // 【終極防線】儲存前再次確保不低於 0
+                // 絕對防護：最少就是 0
                 const safeTotal = Math.max(0, newTotal);
                 const safeWeekly = Math.max(0, newWeekly);
 
@@ -277,6 +269,7 @@
                     taskLog: newLog
                 }));
 
+                // 點擊後，以 text/plain 推送，避免 CORS 被阻擋
                 if (bgSyncAction && GAS_API_URL.startsWith("https://script.google.com")) {
                     setIsSyncing(true);
                     fetch(GAS_API_URL, {
@@ -295,9 +288,9 @@
                 }
             };
 
-            // 【新增功能】一鍵重置系統
+            // 一鍵歸零功能
             const handleHardReset = () => {
-                if (confirm("⚠️ 警告：確定要將『所有點數』與『本週紀錄』強制歸零嗎？\n這將修復亂掉的問題，且無法復原！")) {
+                if (confirm("⚠️ 警告：確定要將『所有點數』與『本週紀錄』強制歸零嗎？\n這將修復亂掉的分數，且無法復原！")) {
                     saveData(0, 0, [], { action: "reset_system", date: todayStr, taskName: "系統強制歸零", exp: 0, status: "approved" });
                     alert("已成功歸零！現在是全新的開始！");
                     setIsReviewOpen(false);
@@ -345,9 +338,8 @@
                 if (existingIndex > -1) {
                     const removedExp = newLog[existingIndex].exp;
                     newLog.splice(existingIndex, 1);
-                    // 【防護】取消任務時，分數最少扣到 0
-                    newTotal = Math.max(0, newTotal - removedExp);
-                    if (isCurrentWeek) newWeekly = Math.max(0, newWeekly - removedExp);
+                    newTotal -= removedExp;
+                    if (isCurrentWeek) newWeekly -= removedExp;
                     bgAction = { action: "remove_task", date: selectedDateStr, taskName: finalName, exp: removedExp };
                 } else {
                     setFlashingTask(taskObj.id);
@@ -378,9 +370,8 @@
                     return;
                 }
                 if (confirm(`確定要扣除本週 ${deduction} EXP 嗎？`)) {
-                    // 【防護】手動扣點最少扣到 0
-                    const newWeekly = Math.max(0, weeklyExp - deduction);
-                    const newTotal = Math.max(0, totalExp - deduction);
+                    const newWeekly = weeklyExp - deduction;
+                    const newTotal = totalExp - deduction;
                     setSpendInput("");
                     triggerConfetti();
                     saveData(newTotal, newWeekly, taskLog, { action: "spend_exp", date: todayStr, itemName: `手動扣除`, cost: deduction });
@@ -391,11 +382,10 @@
             const handleRemoveSingleLog = (logIndexToRemove) => {
                 if(confirm("確定要刪除這筆紀錄並扣回點數嗎？")) {
                     const logItem = taskLog[logIndexToRemove];
-                    // 【防護】刪除單筆紀錄時最少扣到 0
-                    let newTotal = Math.max(0, totalExp - logItem.exp);
+                    let newTotal = totalExp - logItem.exp;
                     let newWeekly = weeklyExp;
                     if (isTimestampInCurrentWeek(new Date(logItem.date).getTime())) {
-                        newWeekly = Math.max(0, newWeekly - logItem.exp);
+                        newWeekly -= logItem.exp;
                     }
                     let newLog = [...taskLog];
                     newLog.splice(logIndexToRemove, 1);
@@ -409,12 +399,11 @@
                 localStorage.setItem(LOCAL_STORAGE_KEY + "_checks", JSON.stringify(newChecks));
             };
 
-            // 【防護】即使傳入異常值，Rank 計算也不會壞掉
+            // 安全計算進度條
             const safeExpForRank = Math.max(0, totalExp || 0);
             const currentRank = RANKS.slice().reverse().find(r => safeExpForRank >= r.req) || RANKS[0];
             const nextRank = RANKS.find(r => r.req > safeExpForRank) || RANKS[RANKS.length - 1];
             
-            // 【修復】防止滿等時「除以零」造成的畫面崩潰
             let progressPercent = 100;
             if (nextRank.req > currentRank.req) {
                 progressPercent = Math.min(100, Math.max(0, ((safeExpForRank - currentRank.req) / (nextRank.req - currentRank.req)) * 100));
@@ -491,27 +480,25 @@
                             <h1 className="text-3xl md:text-5xl font-orbitron font-black italic tracking-wider text-cyan-400 anim-bounce-glow-blue whitespace-nowrap" style={{ textShadow: '2px 2px 0 #000' }}>
                                 Leo dash
                             </h1>
-                            <div className="text-gray-500 cursor-pointer p-1 shrink-0" onClick={() => syncFromCloud(true)} title="點擊強制更新">
+                            <div className="text-gray-500 cursor-pointer p-1 shrink-0 hover:text-cyan-400" onClick={() => syncFromCloud()} title="點擊強制更新">
                                 <CloudSync isSyncing={isSyncing} />
                             </div>
                         </div>
                         <div className="flex items-center gap-2 md:gap-4 shrink-0">
-                            <button onClick={() => setIsStrategyOpen(true)} className="anim-pulse-scale bg-yellow-400 text-black px-3 py-1.5 md:px-5 md:py-2 text-sm md:text-base rounded-full font-bold flex items-center gap-1 shadow-[0_0_15px_rgba(250,204,21,0.5)]">
+                            <button onClick={() => setIsStrategyOpen(true)} className="anim-pulse-scale bg-yellow-400 text-black px-3 py-1.5 md:px-5 md:py-2 text-sm md:text-base rounded-full font-bold flex items-center gap-1 shadow-[0_0_15px_rgba(250,204,21,0.5)] active:scale-95 transition-transform">
                                 📖 攻略
                             </button>
-                            <button onClick={() => setIsReviewOpen(true)} className="bg-indigo-600/80 hover:bg-indigo-500 text-white px-3 py-1.5 md:px-5 md:py-2 text-sm md:text-base rounded-xl font-bold flex items-center gap-1 md:gap-2 border border-indigo-400 shadow-[0_0_10px_rgba(99,102,241,0.5)] transition-all">
+                            <button onClick={() => setIsReviewOpen(true)} className="bg-indigo-600/80 hover:bg-indigo-500 text-white px-3 py-1.5 md:px-5 md:py-2 text-sm md:text-base rounded-xl font-bold flex items-center gap-1 md:gap-2 border border-indigo-400 shadow-[0_0_10px_rgba(99,102,241,0.5)] transition-all active:scale-95">
                                 <Chest size={18} /> 總結
                             </button>
                         </div>
                     </div>
 
-                    <AnimatePresence>
-                        {systemMsg && (
-                            <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="fixed top-20 z-50 bg-green-500 text-white px-6 py-2 md:py-3 md:text-xl rounded-full font-bold shadow-[0_0_20px_rgba(74,222,128,0.8)]">
-                                {systemMsg}
-                            </motion.div>
-                        )}
-                    </AnimatePresence>
+                    {systemMsg && (
+                        <div className="fixed top-20 z-50 bg-green-500 text-white px-6 py-2 md:py-3 md:text-xl rounded-full font-bold shadow-[0_0_20px_rgba(74,222,128,0.8)] modal-fade-in">
+                            {systemMsg}
+                        </div>
+                    )}
 
                     {/* 主要區塊 */}
                     <div className="w-full max-w-2xl px-4 md:px-8 flex flex-col gap-5 md:gap-6 z-10 mt-2">
@@ -521,7 +508,7 @@
                                 <div className="text-sm md:text-base font-orbitron text-gray-400">NEXT RANK: {nextRank.req}</div>
                             </div>
                             <div className="h-6 md:h-8 bg-[#1e293b] rounded-full border border-gray-700 overflow-hidden relative shadow-inner">
-                                <motion.div className="h-full progress-gradient rounded-full" initial={{ width: 0 }} animate={{ width: `${progressPercent}%` }} transition={{ duration: 0.5 }} />
+                                <div className="h-full progress-gradient rounded-full transition-all duration-500 ease-out" style={{ width: `${progressPercent}%` }} />
                             </div>
                         </div>
 
@@ -533,15 +520,15 @@
                                 <div className="text-lg md:text-2xl font-orbitron font-bold text-white">{weeklyExp} / {WEEKLY_GOAL} EXP</div>
                             </div>
                             <div className="h-3 md:h-4 bg-[#0f172a] rounded-full overflow-hidden shadow-inner border border-gray-800">
-                                <motion.div className="h-full bg-gradient-to-r from-blue-500 to-indigo-400 rounded-full" initial={{ width: 0 }} animate={{ width: `${weeklyPercent}%` }} transition={{ duration: 0.5 }} />
+                                <div className="h-full bg-gradient-to-r from-blue-500 to-indigo-400 rounded-full transition-all duration-500 ease-out" style={{ width: `${weeklyPercent}%` }} />
                             </div>
                         </div>
 
                         <div className="w-full p-4 md:p-6 rounded-xl border border-gray-700 shadow-2xl calendar-bg mt-2">
                             <div className="flex justify-between items-center mb-4 text-gray-300 font-orbitron font-bold text-lg">
-                                <button onClick={() => setCalendarDate(new Date(monthYear, monthIndex - 1, 1))} className="px-3 py-1 hover:text-cyan-400">&lt;Prev</button>
+                                <button onClick={() => setCalendarDate(new Date(monthYear, monthIndex - 1, 1))} className="px-3 py-1 hover:text-cyan-400 active:scale-95 transition-transform">&lt;Prev</button>
                                 <div className="bg-[#0f172a] px-6 py-2 rounded-lg text-white border border-gray-700 text-xl">{monthNames[monthIndex]} {monthYear}</div>
-                                <button onClick={() => setCalendarDate(new Date(monthYear, monthIndex + 1, 1))} className="px-3 py-1 hover:text-cyan-400">Next&gt;</button>
+                                <button onClick={() => setCalendarDate(new Date(monthYear, monthIndex + 1, 1))} className="px-3 py-1 hover:text-cyan-400 active:scale-95 transition-transform">Next&gt;</button>
                             </div>
                             <div className="grid grid-cols-7 gap-1 text-center font-orbitron text-base text-gray-500 mb-2 font-bold">
                                 <div>Su</div><div>Mo</div><div>Tu</div><div>We</div><div>Th</div><div>Fr</div><div>Sa</div>
@@ -564,12 +551,12 @@
                                     const examExp = isExamSelected ? examLog.exp : 0;
                                     
                                     return (
-                                        <motion.button key={task.id} whileTap={{ scale: 0.95 }}
+                                        <button key={task.id}
                                             onClick={() => {
                                                 if (isExamSelected) handleTaskClick({ id: "t7" }, examExp, examLog.name);
                                                 else setIsExamModalOpen(true);
                                             }}
-                                            className={`relative p-4 rounded-xl border flex flex-col items-start justify-center gap-3 transition-colors duration-300 ${isExamSelected ? 'glow-border-green bg-[#064e3b]/80' : 'border-gray-700 bg-[#1e293b]/50'}`}
+                                            className={`relative p-4 rounded-xl border flex flex-col items-start justify-center gap-3 transition-all duration-300 active:scale-95 ${isExamSelected ? 'glow-border-green bg-[#064e3b]/80' : 'border-gray-700 bg-[#1e293b]/50'}`}
                                         >
                                             <div className="flex w-full justify-between items-center">
                                                 <span className="text-3xl md:text-4xl">{task.icon}</span>
@@ -580,7 +567,7 @@
                                                 )}
                                             </div>
                                             <span className="text-base md:text-lg font-bold text-left">{task.name}</span>
-                                        </motion.button>
+                                        </button>
                                     )
                                 }
 
@@ -588,161 +575,152 @@
                                 const isFlashing = flashingTask === task.id;
                                 
                                 return (
-                                    <motion.button key={task.id} whileTap={{ scale: 0.95 }} onClick={() => handleTaskClick(task)}
-                                        className={`relative p-4 rounded-xl border flex flex-col items-start justify-center gap-3 transition-colors duration-300 ${isDone ? 'glow-border-green bg-[#064e3b]/80' : 'border-gray-700 bg-[#1e293b]/50'} ${isFlashing ? 'task-flash' : ''}`}
+                                    <button key={task.id} onClick={() => handleTaskClick(task)}
+                                        className={`relative p-4 rounded-xl border flex flex-col items-start justify-center gap-3 transition-all duration-300 active:scale-95 ${isDone ? 'glow-border-green bg-[#064e3b]/80' : 'border-gray-700 bg-[#1e293b]/50'} ${isFlashing ? 'task-flash' : ''}`}
                                     >
                                         <div className="flex w-full justify-between items-center">
                                             <span className="text-3xl md:text-4xl">{task.icon}</span>
                                             <span className="font-orbitron font-bold text-gray-300 text-lg md:text-xl">+{task.exp} EXP</span>
                                         </div>
                                         <span className="text-base md:text-lg font-bold text-left">{task.name}</span>
-                                    </motion.button>
+                                    </button>
                                 );
                             })}
                         </div>
                     </div>
 
-                    {/* 彈窗：每日提醒 */}
-                    <AnimatePresence>
-                        {isReminderOpen && (
-                            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} 
-                                className="fixed inset-0 bg-black/90 z-[70] flex justify-center items-center p-4 md:p-8"
-                                onClick={(e) => { if (e.target === e.currentTarget) setIsReminderOpen(false); }}
-                            >
-                                <div className="w-full max-w-sm md:max-w-md bg-[#0f172a] rounded-2xl border border-cyan-500 p-6 flex flex-col gap-4 relative shadow-[0_0_25px_rgba(34,211,238,0.3)]">
-                                    <button onClick={() => setIsReminderOpen(false)} className="absolute top-4 right-4 w-10 h-10 bg-red-600/80 hover:bg-red-500 rounded-full flex items-center justify-center text-white shrink-0 shadow-lg">
-                                        <X size={24} />
-                                    </button>
-                                    <h2 className="text-2xl md:text-3xl font-bold text-center text-cyan-400 mb-2 border-b border-gray-700 pb-4 pr-8">
-                                        🔔 今日任務提醒
-                                    </h2>
-                                    <p className="text-white text-xl md:text-2xl font-bold text-center leading-relaxed py-6">
-                                        {currentReminderText}
-                                    </p>
-                                    <button onClick={() => setIsReminderOpen(false)} className="w-full py-4 mt-2 bg-cyan-600/90 text-white text-xl font-bold rounded-xl hover:bg-cyan-500 transition-colors shadow-lg">
-                                        我知道了，開始紀錄！
-                                    </button>
-                                </div>
-                            </motion.div>
-                        )}
-                    </AnimatePresence>
+                    {/* 彈窗：每日提醒 (移除 framer-motion，改用原生 CSS 動畫) */}
+                    {isReminderOpen && (
+                        <div className="fixed inset-0 bg-black/90 z-[70] flex justify-center items-center p-4 md:p-8"
+                            onClick={(e) => { if (e.target === e.currentTarget) setIsReminderOpen(false); }}
+                        >
+                            <div className="w-full max-w-sm md:max-w-md bg-[#0f172a] rounded-2xl border border-cyan-500 p-6 flex flex-col gap-4 relative shadow-[0_0_25px_rgba(34,211,238,0.3)] modal-fade-in">
+                                <button onClick={() => setIsReminderOpen(false)} className="absolute top-4 right-4 w-10 h-10 bg-red-600/80 hover:bg-red-500 rounded-full flex items-center justify-center text-white shrink-0 shadow-lg active:scale-95 transition-transform">
+                                    <X size={24} />
+                                </button>
+                                <h2 className="text-2xl md:text-3xl font-bold text-center text-cyan-400 mb-2 border-b border-gray-700 pb-4 pr-8">
+                                    🔔 今日任務提醒
+                                </h2>
+                                <p className="text-white text-xl md:text-2xl font-bold text-center leading-relaxed py-6">
+                                    {currentReminderText}
+                                </p>
+                                <button onClick={() => setIsReminderOpen(false)} className="w-full py-4 mt-2 bg-cyan-600/90 text-white text-xl font-bold rounded-xl hover:bg-cyan-500 transition-colors shadow-lg active:scale-95">
+                                    我知道了，開始紀錄！
+                                </button>
+                            </div>
+                        </div>
+                    )}
 
                     {/* 彈窗：考試分數 */}
-                    <AnimatePresence>
-                        {isExamModalOpen && (
-                            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/90 z-[60] flex justify-center items-center p-4" onClick={(e) => { if (e.target === e.currentTarget) setIsExamModalOpen(false); }}>
-                                <div className="w-full max-w-sm bg-[#0f172a] rounded-2xl border border-yellow-500 p-6 flex flex-col gap-4">
-                                    <h2 className="text-2xl font-bold text-center text-yellow-400 mb-2 border-b border-gray-700 pb-4">💯 選擇考試成績區間</h2>
-                                    <button onClick={() => handleExamSelect(20)} className="w-full py-4 bg-yellow-600/20 border-2 border-yellow-500 text-yellow-400 text-xl font-bold rounded-xl hover:bg-yellow-600/40 transition">90 - 95 分 (+20 EXP)</button>
-                                    <button onClick={() => handleExamSelect(10)} className="w-full py-4 bg-indigo-600/20 border-2 border-indigo-500 text-indigo-300 text-xl font-bold rounded-xl hover:bg-indigo-600/40 transition">80 - 89 分 (+10 EXP)</button>
-                                    <button onClick={() => setIsExamModalOpen(false)} className="w-full py-3 mt-2 bg-gray-700 text-gray-300 text-lg font-bold rounded-xl hover:bg-gray-600">取消</button>
-                                </div>
-                            </motion.div>
-                        )}
-                    </AnimatePresence>
+                    {isExamModalOpen && (
+                        <div className="fixed inset-0 bg-black/90 z-[60] flex justify-center items-center p-4" onClick={(e) => { if (e.target === e.currentTarget) setIsExamModalOpen(false); }}>
+                            <div className="w-full max-w-sm bg-[#0f172a] rounded-2xl border border-yellow-500 p-6 flex flex-col gap-4 modal-fade-in">
+                                <h2 className="text-2xl font-bold text-center text-yellow-400 mb-2 border-b border-gray-700 pb-4">💯 選擇考試成績區間</h2>
+                                <button onClick={() => handleExamSelect(20)} className="w-full py-4 bg-yellow-600/20 border-2 border-yellow-500 text-yellow-400 text-xl font-bold rounded-xl hover:bg-yellow-600/40 transition active:scale-95">90 - 95 分 (+20 EXP)</button>
+                                <button onClick={() => handleExamSelect(10)} className="w-full py-4 bg-indigo-600/20 border-2 border-indigo-500 text-indigo-300 text-xl font-bold rounded-xl hover:bg-indigo-600/40 transition active:scale-95">80 - 89 分 (+10 EXP)</button>
+                                <button onClick={() => setIsExamModalOpen(false)} className="w-full py-3 mt-2 bg-gray-700 text-gray-300 text-lg font-bold rounded-xl hover:bg-gray-600 active:scale-95 transition-transform">取消</button>
+                            </div>
+                        </div>
+                    )}
 
                     {/* 彈窗：攻略本 */}
-                    <AnimatePresence>
-                        {isStrategyOpen && (
-                            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/90 z-50 flex justify-center p-4 md:p-8 overflow-y-auto" onClick={(e) => { if (e.target === e.currentTarget) setIsStrategyOpen(false); }}>
-                                <div className="w-full max-w-2xl bg-[#0f172a] rounded-2xl border border-gray-600 flex flex-col max-h-[90vh] my-auto">
-                                    <div className="p-6 pb-4 border-b border-gray-700 flex justify-between items-start shrink-0">
-                                        <div>
-                                            <h2 className="text-2xl md:text-3xl font-bold text-yellow-400 flex items-center gap-2 mb-2">📖 英雄攻略本</h2>
-                                            <div className="text-cyan-400 font-bold md:text-lg">編輯日期：{selectedDateStr}</div>
-                                        </div>
-                                        <button onClick={() => setIsStrategyOpen(false)} className="w-12 h-12 bg-red-600/80 hover:bg-red-500 rounded-full flex items-center justify-center text-white shrink-0"><X size={28} /></button>
+                    {isStrategyOpen && (
+                        <div className="fixed inset-0 bg-black/90 z-50 flex justify-center p-4 md:p-8 overflow-y-auto" onClick={(e) => { if (e.target === e.currentTarget) setIsStrategyOpen(false); }}>
+                            <div className="w-full max-w-2xl bg-[#0f172a] rounded-2xl border border-gray-600 flex flex-col max-h-[90vh] my-auto modal-fade-in">
+                                <div className="p-6 pb-4 border-b border-gray-700 flex justify-between items-start shrink-0">
+                                    <div>
+                                        <h2 className="text-2xl md:text-3xl font-bold text-yellow-400 flex items-center gap-2 mb-2">📖 英雄攻略本</h2>
+                                        <div className="text-cyan-400 font-bold md:text-lg">編輯日期：{selectedDateStr}</div>
                                     </div>
-                                    <div className="p-6 overflow-y-auto">
-                                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-4">
-                                            {STRATEGIES.map(s => {
-                                                const finalName = `[攻略] ${s.title}`;
-                                                const isDone = taskLog.some(log => log.name === finalName && log.date === selectedDateStr);
-                                                let colorClass = "glow-border-cyan bg-cyan-900/30";
-                                                if(s.color === "green") colorClass = "glow-border-green bg-green-900/30";
-                                                if(s.color === "purple") colorClass = "glow-border-purple bg-purple-900/30";
-                                                if(s.color === "orange") colorClass = "glow-border-orange bg-orange-900/30";
+                                    <button onClick={() => setIsStrategyOpen(false)} className="w-12 h-12 bg-red-600/80 hover:bg-red-500 rounded-full flex items-center justify-center text-white shrink-0 active:scale-95 transition-transform"><X size={28} /></button>
+                                </div>
+                                <div className="p-6 overflow-y-auto">
+                                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-4">
+                                        {STRATEGIES.map(s => {
+                                            const finalName = `[攻略] ${s.title}`;
+                                            const isDone = taskLog.some(log => log.name === finalName && log.date === selectedDateStr);
+                                            let colorClass = "glow-border-cyan bg-cyan-900/30";
+                                            if(s.color === "green") colorClass = "glow-border-green bg-green-900/30";
+                                            if(s.color === "purple") colorClass = "glow-border-purple bg-purple-900/30";
+                                            if(s.color === "orange") colorClass = "glow-border-orange bg-orange-900/30";
 
-                                                return (
-                                                    <motion.button key={s.id} whileTap={{ scale: 0.95 }} onClick={() => handleTaskClick({ id: s.id }, s.exp, finalName)} className={`relative p-4 rounded-xl border flex flex-col items-start justify-center gap-3 transition-colors duration-300 ${isDone ? colorClass : 'border-gray-700 bg-[#1e293b]/50'}`}>
-                                                        <div className="flex w-full justify-between items-center mb-1"><span className="text-3xl">{s.icon}</span><span className={`font-orbitron font-bold text-${s.color}-300 md:text-lg`}>+{s.exp}</span></div>
-                                                        <div className="text-left w-full"><div className="font-bold md:text-lg text-gray-200">{s.title}</div><div className="text-xs md:text-sm text-gray-400 mt-1 line-clamp-3">{s.desc}</div></div>
-                                                    </motion.button>
-                                                )
-                                            })}
-                                        </div>
+                                            return (
+                                                <button key={s.id} onClick={() => handleTaskClick({ id: s.id }, s.exp, finalName)} className={`relative p-4 rounded-xl border flex flex-col items-start justify-center gap-3 transition-all duration-300 active:scale-95 ${isDone ? colorClass : 'border-gray-700 bg-[#1e293b]/50'}`}>
+                                                    <div className="flex w-full justify-between items-center mb-1"><span className="text-3xl">{s.icon}</span><span className={`font-orbitron font-bold text-${s.color}-300 md:text-lg`}>+{s.exp}</span></div>
+                                                    <div className="text-left w-full"><div className="font-bold md:text-lg text-gray-200">{s.title}</div><div className="text-xs md:text-sm text-gray-400 mt-1 line-clamp-3">{s.desc}</div></div>
+                                                </button>
+                                            )
+                                        })}
                                     </div>
                                 </div>
-                            </motion.div>
-                        )}
-                    </AnimatePresence>
+                            </div>
+                        </div>
+                    )}
 
-                    {/* 彈窗：總結 */}
-                    <AnimatePresence>
-                        {isReviewOpen && (
-                            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/90 z-50 flex justify-center p-4 md:p-8 items-center" onClick={(e) => { if (e.target === e.currentTarget) setIsReviewOpen(false); }}>
-                                <div className="w-full max-w-2xl bg-[#0f172a] rounded-2xl border border-indigo-500 flex flex-col max-h-[90vh]">
-                                    <div className="p-6 pb-4 border-b border-gray-700 flex justify-between items-start shrink-0">
-                                        <div>
-                                            <h2 className="text-2xl md:text-3xl font-bold text-white flex items-center gap-2 mb-2">📝 每週總結與點數使用</h2>
-                                            <p className="text-cyan-400 md:text-lg">目前顯示：包含 {todayStr} 的這一週</p>
-                                        </div>
-                                        <button onClick={() => setIsReviewOpen(false)} className="w-12 h-12 bg-red-600/80 hover:bg-red-500 rounded-full flex items-center justify-center text-white shrink-0 ml-4"><X size={28} /></button>
+                    {/* 彈窗：總結與系統重置 */}
+                    {isReviewOpen && (
+                        <div className="fixed inset-0 bg-black/90 z-50 flex justify-center p-4 md:p-8 items-center" onClick={(e) => { if (e.target === e.currentTarget) setIsReviewOpen(false); }}>
+                            <div className="w-full max-w-2xl bg-[#0f172a] rounded-2xl border border-indigo-500 flex flex-col max-h-[90vh] modal-fade-in">
+                                <div className="p-6 pb-4 border-b border-gray-700 flex justify-between items-start shrink-0">
+                                    <div>
+                                        <h2 className="text-2xl md:text-3xl font-bold text-white flex items-center gap-2 mb-2">📝 每週總結與點數使用</h2>
+                                        <p className="text-cyan-400 md:text-lg">目前顯示：包含 {todayStr} 的這一週</p>
                                     </div>
-                                    <div className="p-6 overflow-y-auto flex-1 space-y-6">
-                                        <div className="bg-[#1e293b] p-5 md:p-6 rounded-xl border border-indigo-500/50">
-                                            <div className="flex justify-between items-center mb-4">
-                                                <span className="text-gray-300 text-lg md:text-xl">本週剩餘可扣點數：</span>
-                                                <span className="font-orbitron font-bold text-3xl md:text-4xl text-cyan-400">{weeklyExp} EXP</span>
-                                            </div>
-                                            <div className="flex gap-3">
-                                                <input type="number" placeholder="輸入扣除點數" value={spendInput} onChange={(e) => setSpendInput(e.target.value)} className="flex-1 bg-[#0f172a] border border-gray-600 rounded-lg px-4 py-3 text-white text-lg font-orbitron focus:outline-none focus:border-cyan-400"/>
-                                                <button onClick={handleCustomSpend} className="bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-3 rounded-lg font-bold text-lg whitespace-nowrap transition-colors">確認扣除</button>
-                                            </div>
+                                    <button onClick={() => setIsReviewOpen(false)} className="w-12 h-12 bg-red-600/80 hover:bg-red-500 rounded-full flex items-center justify-center text-white shrink-0 ml-4 active:scale-95 transition-transform"><X size={28} /></button>
+                                </div>
+                                <div className="p-6 overflow-y-auto flex-1 space-y-6">
+                                    <div className="bg-[#1e293b] p-5 md:p-6 rounded-xl border border-indigo-500/50">
+                                        <div className="flex justify-between items-center mb-4">
+                                            <span className="text-gray-300 text-lg md:text-xl">本週剩餘可扣點數：</span>
+                                            <span className="font-orbitron font-bold text-3xl md:text-4xl text-cyan-400">{weeklyExp} EXP</span>
                                         </div>
-                                        <div>
-                                            <h3 className="text-xl font-bold text-gray-300 mb-4 flex items-center gap-2">📅 本週每日明細：</h3>
-                                            {sortedDays.length === 0 ? (
-                                                <p className="text-gray-500 text-center py-6 text-lg">本週還沒有任何紀錄喔！</p>
-                                            ) : (
-                                                sortedDays.map(dateStr => (
-                                                    <div key={dateStr} className="mb-4 bg-[#1e293b]/50 border border-gray-700 rounded-xl overflow-hidden">
-                                                        <div className="bg-[#1e293b] px-4 py-3 flex justify-between items-center border-b border-gray-700">
-                                                            <span className="font-bold text-lg text-white">{dateStr} {dateStr === todayStr ? "(今天)" : ""}</span>
-                                                            <label className="flex items-center gap-2 cursor-pointer">
-                                                                <span className="text-gray-400 text-sm">家長已閱</span>
-                                                                <input type="checkbox" checked={!!checkedDays[dateStr]} onChange={() => toggleDayCheck(dateStr)} className="w-5 h-5 rounded border-gray-600 bg-gray-700 text-green-500 focus:ring-green-500 focus:ring-offset-gray-800"/>
-                                                            </label>
-                                                        </div>
-                                                        <div className="p-2">
-                                                            {logsByDay[dateStr].map(log => (
-                                                                <div key={log.realIndex} className="flex justify-between items-center p-3 hover:bg-[#0f172a]/50 rounded-lg transition-colors group">
-                                                                    <div className="flex items-center gap-3"><span className="text-green-400 bg-green-400/10 p-1 rounded"><Check size={16} /></span><span className="text-gray-200 md:text-lg">{log.name}</span></div>
-                                                                    <div className="flex items-center gap-4">
-                                                                        <span className="font-orbitron font-bold text-green-400 md:text-xl">+{log.exp}</span>
-                                                                        <button onClick={() => handleRemoveSingleLog(log.realIndex)} className="text-gray-500 hover:text-red-400 opacity-50 group-hover:opacity-100 transition-all p-1" title="刪除此紀錄"><Trash2 /></button>
-                                                                    </div>
-                                                                </div>
-                                                            ))}
-                                                        </div>
+                                        <div className="flex gap-3">
+                                            <input type="number" placeholder="輸入扣除點數" value={spendInput} onChange={(e) => setSpendInput(e.target.value)} className="flex-1 bg-[#0f172a] border border-gray-600 rounded-lg px-4 py-3 text-white text-lg font-orbitron focus:outline-none focus:border-cyan-400"/>
+                                            <button onClick={handleCustomSpend} className="bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-3 rounded-lg font-bold text-lg whitespace-nowrap transition-colors active:scale-95">確認扣除</button>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <h3 className="text-xl font-bold text-gray-300 mb-4 flex items-center gap-2">📅 本週每日明細：</h3>
+                                        {sortedDays.length === 0 ? (
+                                            <p className="text-gray-500 text-center py-6 text-lg">本週還沒有任何紀錄喔！</p>
+                                        ) : (
+                                            sortedDays.map(dateStr => (
+                                                <div key={dateStr} className="mb-4 bg-[#1e293b]/50 border border-gray-700 rounded-xl overflow-hidden">
+                                                    <div className="bg-[#1e293b] px-4 py-3 flex justify-between items-center border-b border-gray-700">
+                                                        <span className="font-bold text-lg text-white">{dateStr} {dateStr === todayStr ? "(今天)" : ""}</span>
+                                                        <label className="flex items-center gap-2 cursor-pointer">
+                                                            <span className="text-gray-400 text-sm">家長已閱</span>
+                                                            <input type="checkbox" checked={!!checkedDays[dateStr]} onChange={() => toggleDayCheck(dateStr)} className="w-5 h-5 rounded border-gray-600 bg-gray-700 text-green-500 focus:ring-green-500 focus:ring-offset-gray-800"/>
+                                                        </label>
                                                     </div>
-                                                ))
-                                            )}
-                                        </div>
-                                        
-                                        {/* 強制歸零按鈕區塊 */}
-                                        <div className="mt-8 border-t border-gray-700 pt-4 flex justify-between items-center">
-                                            <span className="text-gray-500 text-sm">系統發生異常時可使用：</span>
-                                            <button onClick={handleHardReset} className="bg-red-900/80 hover:bg-red-700 text-red-200 px-4 py-2 rounded-lg font-bold text-sm transition-colors border border-red-700">
-                                                ⚠️ 系統重置 (強制歸零)
-                                            </button>
-                                        </div>
-
+                                                    <div className="p-2">
+                                                        {logsByDay[dateStr].map(log => (
+                                                            <div key={log.realIndex} className="flex justify-between items-center p-3 hover:bg-[#0f172a]/50 rounded-lg transition-colors group">
+                                                                <div className="flex items-center gap-3"><span className="text-green-400 bg-green-400/10 p-1 rounded"><Check size={16} /></span><span className="text-gray-200 md:text-lg">{log.name}</span></div>
+                                                                <div className="flex items-center gap-4">
+                                                                    <span className="font-orbitron font-bold text-green-400 md:text-xl">+{log.exp}</span>
+                                                                    <button onClick={() => handleRemoveSingleLog(log.realIndex)} className="text-gray-500 hover:text-red-400 opacity-50 group-hover:opacity-100 transition-all p-1 active:scale-90" title="刪除此紀錄"><Trash2 /></button>
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            ))
+                                        )}
                                     </div>
+                                    
+                                    {/* ⚠️ 一鍵重置按鈕 ⚠️ */}
+                                    <div className="mt-8 border-t border-gray-700 pt-6 flex flex-col md:flex-row justify-between items-center gap-4">
+                                        <span className="text-gray-500 text-sm">系統發生異常（如出現負數或錯亂）時可使用：</span>
+                                        <button onClick={handleHardReset} className="w-full md:w-auto bg-red-900/80 hover:bg-red-700 text-red-200 px-6 py-3 rounded-lg font-bold transition-colors border border-red-700 active:scale-95 shadow-lg">
+                                            ⚠️ 系統重置 (強制歸零)
+                                        </button>
+                                    </div>
+
                                 </div>
-                            </motion.div>
-                        )}
-                    </AnimatePresence>
+                            </div>
+                        </div>
+                    )}
                 </div>
             );
         };
