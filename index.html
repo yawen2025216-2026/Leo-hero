@@ -76,9 +76,9 @@
         const AnimatePresence = window.Motion ? window.Motion.AnimatePresence : ({children}) => <>{children}</>;
 
         // 🔴🔴🔴 請務必把引號內的文字，換成您的 Google Apps Script 網址 🔴🔴🔴
-        const GAS_API_URL = "https://script.google.com/macros/s/AKfycbyfroi4IYTg7gzUHT-FH_QtHescW43IGQ1YuGe3-UYn15ZMmNFv5CoaYIT9ZwsKTyjY6A/exec";
+        const GAS_API_URL = "https://script.google.com/macros/s/AKfycbyfroi4IYTg7gzUHT-FH_QtHescW43IGQ1YuGe3-UYn15ZMmNFv5CoaYIT9ZwsKTyjY6A/exec
+";
         
-        // 更新儲存版號，強迫系統清除舊的錯誤快取
         const LOCAL_STORAGE_KEY = "leo_dash_local_data_v6";
 
         // --- SVG 圖示 ---
@@ -119,14 +119,15 @@
             { id: "t7", name: "平日考試優秀", exp: 0, icon: "💯", type: "exam" },
         ];
 
+        // 🌟 更新的每日提醒內容 🌟
         const DAILY_REMINDERS = {
-            1: "週一提醒：使用線上英文ＡＰＰ，週三前完成自社評量",
-            2: "週二提醒：寫長頸鹿英文功課",
-            3: "週三提醒：寫自社評量",
-            4: "週四提醒：寫長頸鹿英文功課",
-            5: "週五提醒：使用線上英文ＡＰＰ",
-            6: "週六提醒：寫數學國語評量",
-            0: "週日提醒：寫長頸鹿英文功課，聯絡簿簽名確認"
+            1: "週一提醒：寫國語評量",
+            2: "週二提醒：完成 Epop",
+            3: "週三提醒：寫長頸鹿英文功課",
+            4: "週四提醒：寫社自評量",
+            5: "週五提醒：寫數學評量",
+            6: "週六提醒：週末放鬆時間，檢查未完成任務",
+            0: "週日提醒：寫長頸鹿英文功課"
         };
 
         const STRATEGIES = [
@@ -183,6 +184,9 @@
                     if (isManual) showSystemMessage("⚠️ 請先在程式碼設定 GAS 網址！");
                     return;
                 }
+
+                // 【防護】避免存檔到一半時，去雲端抓到舊資料把畫面蓋掉
+                if (isSyncing && !isManual) return;
 
                 if (isManual) setIsSyncing(true);
                 try {
@@ -254,9 +258,7 @@
                 }
 
                 syncFromCloud();
-
-                // 【修復】移除 10 秒自動重新整理，避免 Google 試算表還沒更新完，
-                // 就把舊資料抓下來覆蓋掉剛點選的任務（這就是點選後消失的原因）
+                // 不再自動定時刷新，避免吃掉剛剛點選的進度
             }, []);
 
             const saveData = (newTotal, newWeekly, newLog, bgSyncAction = null) => {
@@ -280,7 +282,7 @@
                     fetch(GAS_API_URL, {
                         method: 'POST',
                         mode: 'no-cors',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
                         body: JSON.stringify({
                             totalExp: safeTotal,
                             weeklyExp: safeWeekly,
